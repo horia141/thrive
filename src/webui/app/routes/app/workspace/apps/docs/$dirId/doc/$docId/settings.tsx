@@ -280,7 +280,10 @@ export default function DocSettings() {
           </Stack>
         </Stack>
       </SectionCard>
-      <EntityLocationMapSection location={loaderData.location} />
+      <EntityLocationMapSection
+        location={loaderData.location}
+        cacheKey="entity-location-map-leaflet"
+      />
     </LeafPanel>
   );
 }

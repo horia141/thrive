@@ -193,6 +193,7 @@ export default function Vacations() {
         <LocationsMap
           title="Vacation locations"
           markers={mapMarkers}
+          cacheKey="vacations"
           onSelectHref={handleMapSelect}
         />
 

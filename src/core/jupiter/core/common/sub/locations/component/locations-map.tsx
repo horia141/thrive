@@ -1,36 +1,28 @@
 import { JupiterLocationResolver, type Location } from "@jupiter/webapi-client";
 import { Box, Typography } from "@mui/material";
-import { useContext, useEffect, useMemo, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
 
-import { loadGoogleMapsLibrary } from "#/core/common/sub/locations/component/google-maps-loader";
+import type {
+  BorrowedMap,
+  LocationMapMarker,
+} from "#/core/common/sub/locations/component/locations-map-pool";
+import { borrowLocationsMap } from "#/core/common/sub/locations/component/locations-map-pool";
 import { locationGps } from "#/core/common/sub/locations/sub/location/root";
 import { GlobalPropertiesContext } from "#/core/config-client";
 import { GoogleMapsApiKeyContext } from "#/core/infra/google-maps-api-key-context";
 
-const KEY_LOCATION_MARKER_URL =
-  "data:image/svg+xml;charset=UTF-8," +
-  encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="40" viewBox="0 0 32 40">
-      <path fill="#F9A825" stroke="#E65100" stroke-width="1.5"
-        d="M16 1C8.3 1 2 7.3 2 15c0 9.5 14 24 14 24s14-14.5 14-24C30 7.3 23.7 1 16 1z"/>
-      <path fill="#5D4037"
-        d="M16 8.2l1.85 3.75 4.15.6-3 2.92.71 4.13L16 17.7l-3.71 1.9.71-4.13-3-2.92 4.15-.6z"/>
-    </svg>`.replace(/\s+/g, " "),
-  );
-
-export interface LocationMapMarker {
-  id: string;
-  name: string;
-  latitude: number;
-  longitude: number;
-  href?: string;
-  isKey?: boolean;
-}
+export type { LocationMapMarker };
 
 interface Props {
   title?: string;
   markers: LocationMapMarker[];
   height?: number;
+  /**
+   * Which pooled map this view borrows. Views sharing a key hand the same map
+   * back and forth as you navigate between them, instead of building a new
+   * one each time.
+   */
+  cacheKey?: string;
   onSelectHref?: (href: string) => void;
 }
 
@@ -56,6 +48,7 @@ export function LocationsMap({
   title = "Map",
   markers,
   height = 280,
+  cacheKey = "locations-map",
   onSelectHref,
 }: Props) {
   const overviewMap = title.length > 0;
@@ -64,97 +57,48 @@ export function LocationsMap({
   const showGoogleMaps =
     globalProperties.locationResolver === JupiterLocationResolver.GOOGLE_MAPS;
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const borrowedRef = useRef<BorrowedMap | null>(null);
+  const markersRef = useRef(markers);
   const onSelectHrefRef = useRef(onSelectHref);
-  const markerKey = useMemo(
-    () =>
-      markers
-        .map(
-          (marker) =>
-            `${marker.id}:${marker.latitude}:${marker.longitude}:${marker.href ?? ""}:${marker.isKey ? "1" : "0"}`,
-        )
-        .join("|"),
-    [markers],
-  );
 
   useEffect(() => {
     onSelectHrefRef.current = onSelectHref;
   }, [onSelectHref]);
 
+  const canShowMap = showGoogleMaps && !!apiKey && markers.length > 0;
+
+  // Borrow a map for as long as this view is on screen, rather than building
+  // one. The map outlives the component, so a navigation away and back, a
+  // StrictMode double mount, or a Remix revalidation all pick the same map
+  // back up instead of flashing a fresh one into place.
   useEffect(() => {
-    if (!showGoogleMaps || !apiKey || markers.length === 0) {
+    if (!canShowMap) {
       return;
     }
     const container = containerRef.current;
-    if (!container) {
+    if (container === null) {
       return;
     }
-
-    let cancelled = false;
-    const listeners: google.maps.MapsEventListener[] = [];
-
-    async function mount() {
-      try {
-        const [{ Map }, { Marker }, { LatLngBounds }] = await Promise.all([
-          loadGoogleMapsLibrary(apiKey as string, "maps"),
-          loadGoogleMapsLibrary(apiKey as string, "marker"),
-          loadGoogleMapsLibrary(apiKey as string, "core"),
-        ]);
-        if (cancelled || !container) {
-          return;
-        }
-        const first = markers[0];
-        const map = new Map(container, {
-          center: { lat: first.latitude, lng: first.longitude },
-          zoom: markers.length === 1 ? 10 : 2,
-          mapTypeControl: false,
-          streetViewControl: false,
-          fullscreenControl: false,
-        });
-        const bounds = new LatLngBounds();
-        for (const marker of markers) {
-          const position = { lat: marker.latitude, lng: marker.longitude };
-          const pin = new Marker({
-            map,
-            position,
-            title: marker.name,
-            zIndex: marker.isKey ? 1000 : 1,
-            ...(marker.isKey
-              ? {
-                  icon: {
-                    url: KEY_LOCATION_MARKER_URL,
-                    scaledSize: new google.maps.Size(28, 40),
-                    anchor: new google.maps.Point(14, 40),
-                  },
-                }
-              : {}),
-          });
-          bounds.extend(position);
-          if (marker.href) {
-            listeners.push(
-              pin.addListener("click", () => {
-                onSelectHrefRef.current?.(marker.href as string);
-              }),
-            );
-          }
-        }
-        if (markers.length > 1) {
-          map.fitBounds(bounds);
-        }
-      } catch {
-        // Invalid or blocked API keys should not break the page.
-      }
-    }
-
-    void mount();
+    const borrowed = borrowLocationsMap(cacheKey, apiKey as string, (href) =>
+      onSelectHrefRef.current?.(href),
+    );
+    borrowedRef.current = borrowed;
+    borrowed.attachTo(container);
+    borrowed.showMarkers(markersRef.current);
 
     return () => {
-      cancelled = true;
-      for (const listener of listeners) {
-        listener.remove?.();
-      }
-      container.replaceChildren();
+      borrowedRef.current = null;
+      borrowed.giveBack();
     };
-  }, [apiKey, showGoogleMaps, markerKey, markers]);
+  }, [canShowMap, cacheKey, apiKey]);
+
+  // A revalidation hands out a fresh array holding the very same locations, so
+  // let the map decide whether anything actually changed - it redraws only
+  // when the pins themselves differ, and never touches the camera otherwise.
+  useEffect(() => {
+    markersRef.current = markers;
+    borrowedRef.current?.showMarkers(markers);
+  }, [markers]);
 
   if (!showGoogleMaps || markers.length === 0) {
     return null;
@@ -170,6 +114,7 @@ export function LocationsMap({
       <Box
         ref={containerRef}
         sx={{
+          position: "relative",
           width: "100%",
           ...(overviewMap
             ? {

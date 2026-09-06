@@ -12,11 +12,18 @@ import { GoogleMapsApiKeyContext } from "#/core/infra/google-maps-api-key-contex
 interface EntityLocationMapSectionProps {
   locations?: Array<Location> | null;
   location?: Location | null;
+  /**
+   * Which pooled map to borrow. Entity views share one by default, so moving
+   * between entities re-pins the map you already have instead of building a
+   * new one. A view showing two of these at once needs to override it.
+   */
+  cacheKey?: string;
 }
 
 export function EntityLocationMapSection({
   locations,
   location,
+  cacheKey = "entity-location-map",
 }: EntityLocationMapSectionProps) {
   const globalProperties = useContext(GlobalPropertiesContext);
   const { googleMapsApiKey: apiKey } = useContext(GoogleMapsApiKeyContext);
@@ -36,7 +43,12 @@ export function EntityLocationMapSection({
 
   return (
     <SectionCard id="entity-location-map" title="Map">
-      <LocationsMap title="" markers={markers} height={240} />
+      <LocationsMap
+        title=""
+        markers={markers}
+        height={240}
+        cacheKey={cacheKey}
+      />
     </SectionCard>
   );
 }

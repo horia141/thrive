@@ -94,6 +94,7 @@ export default function Locations() {
         <LocationsMap
           title="Locations"
           markers={mapMarkers}
+          cacheKey="core-locations"
           onSelectHref={handleMapSelect}
         />
 

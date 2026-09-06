@@ -177,6 +177,7 @@ export default function TravelWishWishlist() {
         <LocationsMap
           title="Wishlist locations"
           markers={mapMarkers}
+          cacheKey="vacations-wish-list"
           onSelectHref={handleMapSelect}
         />
 
