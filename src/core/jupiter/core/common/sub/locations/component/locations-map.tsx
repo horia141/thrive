@@ -1,6 +1,7 @@
 import { JupiterLocationResolver, type Location } from "@jupiter/webapi-client";
-import { Box, Typography } from "@mui/material";
-import { useContext, useEffect, useRef } from "react";
+import { ZoomOutMap as ZoomOutMapIcon } from "@mui/icons-material";
+import { Box, IconButton, Tooltip, Typography } from "@mui/material";
+import { useCallback, useContext, useEffect, useRef } from "react";
 
 import type {
   BorrowedMap,
@@ -92,6 +93,10 @@ export function LocationsMap({
     };
   }, [canShowMap, cacheKey, apiKey]);
 
+  const handleResetView = useCallback(() => {
+    borrowedRef.current?.resetView();
+  }, []);
+
   // A revalidation hands out a fresh array holding the very same locations, so
   // let the map decide whether anything actually changed - it redraws only
   // when the pins themselves differ, and never touches the camera otherwise.
@@ -112,7 +117,6 @@ export function LocationsMap({
         </Typography>
       ) : null}
       <Box
-        ref={containerRef}
         sx={{
           position: "relative",
           width: "100%",
@@ -132,7 +136,35 @@ export function LocationsMap({
               }
             : undefined),
         }}
-      />
+      >
+        {/* The map itself goes in here, and only in here - the pool swaps out
+            everything below this node, so the control has to sit beside it. */}
+        <Box ref={containerRef} sx={{ position: "absolute", inset: 0 }} />
+
+        {canShowMap ? (
+          <Tooltip title="Show all locations">
+            <IconButton
+              type="button"
+              size="small"
+              aria-label="Show all locations"
+              onClick={handleResetView}
+              sx={{
+                position: "absolute",
+                top: 8,
+                right: 8,
+                zIndex: 1,
+                backgroundColor: "background.paper",
+                boxShadow: 1,
+                "&:hover": {
+                  backgroundColor: "background.paper",
+                },
+              }}
+            >
+              <ZoomOutMapIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : null}
+      </Box>
     </Box>
   );
 }

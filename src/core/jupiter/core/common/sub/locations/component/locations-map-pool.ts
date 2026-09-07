@@ -52,9 +52,18 @@ interface PooledMap {
   pins: google.maps.Marker[];
   listeners: google.maps.MapsEventListener[];
   markersKey: string | null;
+  markerIds: Set<string>;
+  frame: MapFrame | null;
   onSelectHref: ((href: string) => void) | null;
   borrowed: boolean;
   returnedAt: number;
+}
+
+// Where the camera sits when a set of markers is first shown - all of them in
+// view - which is also where the "zoom to fit" control puts it back.
+interface MapFrame {
+  bounds: google.maps.LatLngBounds;
+  onlyMarker: google.maps.LatLngLiteral | null;
 }
 
 interface MapsDrawing {
@@ -80,6 +89,8 @@ export interface BorrowedMap {
   attachTo(container: HTMLElement): void;
   /** Draws ``markers``, doing nothing at all if they are already drawn. */
   showMarkers(markers: LocationMapMarker[]): void;
+  /** Puts the camera back where it sat when these markers first appeared. */
+  resetView(): void;
   /** Gives the map back to the pool. The map itself stays alive. */
   giveBack(): void;
 }
@@ -114,6 +125,9 @@ export function borrowLocationsMap(
     showMarkers(markers: LocationMapMarker[]): void {
       showMarkers(borrowed, markers);
     },
+    resetView(): void {
+      resetView(borrowed);
+    },
     giveBack(): void {
       if (givenBack) {
         return;
@@ -144,6 +158,8 @@ function newPooledMap(poolKey: string, apiKey: string): PooledMap {
     pins: [],
     listeners: [],
     markersKey: null,
+    markerIds: new Set(),
+    frame: null,
     onSelectHref: null,
     borrowed: false,
     returnedAt: 0,
@@ -179,6 +195,24 @@ function showMarkers(pooled: PooledMap, markers: LocationMapMarker[]): void {
     }
     drawMarkers(pooled, map, markers);
   });
+}
+
+function resetView(pooled: PooledMap): void {
+  void ensureMap(pooled).then((map) => {
+    if (map === null || pooled.frame === null) {
+      return;
+    }
+    applyFrame(map, pooled.frame);
+  });
+}
+
+function applyFrame(map: google.maps.Map, frame: MapFrame): void {
+  if (frame.onlyMarker !== null) {
+    map.setCenter(frame.onlyMarker);
+    map.setZoom(10);
+    return;
+  }
+  map.fitBounds(frame.bounds);
 }
 
 function ensureMap(pooled: PooledMap): Promise<google.maps.Map | null> {
@@ -218,6 +252,11 @@ function drawMarkers(
   map: google.maps.Map,
   markers: LocationMapMarker[],
 ): void {
+  const markerIds = new Set(markers.map((marker) => marker.id));
+  const showsSomewhereElse =
+    pooled.markerIds.size === 0 ||
+    !markers.some((marker) => pooled.markerIds.has(marker.id));
+
   for (const listener of pooled.listeners) {
     listener.remove?.();
   }
@@ -228,6 +267,8 @@ function drawMarkers(
   pooled.pins = [];
 
   if (drawing === null || markers.length === 0) {
+    pooled.markerIds = new Set();
+    pooled.frame = null;
     return;
   }
   const { Marker, LatLngBounds, Size, Point } = drawing;
@@ -262,11 +303,21 @@ function drawMarkers(
     }
   }
 
-  if (markers.length > 1) {
-    map.fitBounds(bounds);
-  } else {
-    map.setCenter({ lat: markers[0].latitude, lng: markers[0].longitude });
-    map.setZoom(10);
+  pooled.frame = {
+    bounds,
+    onlyMarker:
+      markers.length === 1
+        ? { lat: markers[0].latitude, lng: markers[0].longitude }
+        : null,
+  };
+  pooled.markerIds = markerIds;
+
+  // Adding or removing a location leaves the reader looking at whatever they
+  // had zoomed in on - it is their camera, not ours, once they have moved it.
+  // A wholly different set of places, though, means a different subject
+  // altogether - another entity's map, say - so that one gets framed afresh.
+  if (showsSomewhereElse) {
+    applyFrame(map, pooled.frame);
   }
 }
 
@@ -315,6 +366,8 @@ function dropMap(pooled: PooledMap): void {
   pooled.map = null;
   pooled.loading = null;
   pooled.markersKey = null;
+  pooled.markerIds = new Set();
+  pooled.frame = null;
   pooled.host.remove();
 
   const pool = POOLS.get(pooled.poolKey);
